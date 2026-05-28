@@ -1,0 +1,245 @@
+```lua
+--[[
+    Système de Physique Corporelle et de Déformation de Vêtements (Optimisé pour Delta)
+    Version avec gestion, capture et affichage rigoureux des erreurs dans la console.
+--]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TestService = game:GetService("TestService") -- Permet d'écrire en couleur dans la console Roblox
+local LocalPlayer = Players.LocalPlayer
+
+-- Paramètres généraux
+local CHEST_DEPTH = 1.35
+local CHEST_SCALE = 1.25
+local JIGGLE_BOUNCE = 0.08
+local PhysicsEnabled = true
+
+-- --- FONCTION DE LOG ET DE GESTION DES ERREURS ---
+-- Écrit les messages importants et les erreurs dans la console de Delta et de Roblox
+local function logMessage(message, typeLog)
+    local prefix = "[Physique-Delta] "
+    if typeLog == "erreur" then
+        -- Écrit en rouge dans la console d'erreur standard de Roblox et dans Delta
+        TestService:Error(prefix .. "ERREUR DETECTEE : " .. tostring(message))
+        warn(prefix .. "Traceback d'erreur : " .. debug.traceback())
+    elseif typeLog == "attention" then
+        warn(prefix .. "ATTENTION : " .. tostring(message))
+    else
+        print(prefix .. "INFO : " .. tostring(message))
+    end
+end
+
+-- --- INTERFACE GRAPHIQUE COMPATIBLE DELTA ---
+local ScreenGui
+local successGui, errGui = pcall(function()
+    ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "DeltaPhysiqueGui"
+    ScreenGui.ResetOnSpawn = false
+
+    -- Tentative d'insertion sécurisée dans CoreGui
+    local coreGuiSuccess, _ = pcall(function()
+        ScreenGui.Parent = game:GetService("CoreGui")
+    end)
+    
+    if not coreGuiSuccess or not ScreenGui.Parent then
+        ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+        logMessage("CoreGui inaccessible. Interface placée dans PlayerGui.", "attention")
+    end
+
+    -- Conteneur Principal
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.Size = UDim2.new(0, 180, 0, 110)
+    MainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.Active = true
+    MainFrame.Draggable = true
+    MainFrame.Parent = ScreenGui
+
+    local UICorner = Instance.new("UICorner")
+    UICorner.CornerRadius = UDim.new(0, 8)
+    UICorner.Parent = MainFrame
+
+    -- Titre
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(1, 0, 0, 35)
+    Title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    Title.Text = "Contrôle Physique R15"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextSize = 13
+    Title.Font = Enum.Font.SourceSansBold
+    Title.Parent = MainFrame
+
+    local TitleCorner = Instance.new("UICorner")
+    TitleCorner.CornerRadius = UDim.new(0, 8)
+    TitleCorner.Parent = Title
+
+    -- Bouton Interrupteur
+    local ToggleBtn = Instance.new("TextButton")
+    ToggleBtn.Size = UDim2.new(0, 140, 0, 35)
+    ToggleBtn.Position = UDim2.new(0.5, -70, 0.5, -5)
+    ToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 100)
+    ToggleBtn.Text = "Physique : ACTIVÉE"
+    ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ToggleBtn.Font = Enum.Font.SourceSansSemibold
+    ToggleBtn.TextSize = 14
+    ToggleBtn.Parent = MainFrame
+
+    local BtnCorner = Instance.new("UICorner")
+    BtnCorner.CornerRadius = UDim.new(0, 6)
+    BtnCorner.Parent = ToggleBtn
+
+    ToggleBtn.MouseButton1Click:Connect(function()
+        PhysicsEnabled = not PhysicsEnabled
+        if PhysicsEnabled then
+            ToggleBtn.Text = "Physique : ACTIVÉE"
+            ToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 100)
+            logMessage("Physique activée par l'utilisateur.", "info")
+        else
+            ToggleBtn.Text = "Physique : DÉSACTIVÉE"
+            ToggleBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+            logMessage("Physique désactivée par l'utilisateur.", "info")
+        end
+    end)
+end)
+
+if not successGui then
+    logMessage("Échec de la création de l'interface graphique : " .. tostring(errGui), "erreur")
+end
+
+
+-- --- LOGIQUE COMPATIBLE DÉFORMATION ET PHYSIQUE ---
+local function initialiserPhysiquePersonnage(character)
+    -- On utilise xpcall pour intercepter et tracer précisément chaque erreur de logique
+    local successInit, errInit = xpcall(function()
+        local humanoid = character:WaitForChild("Humanoid", 8)
+        local upperTorso = character:WaitForChild("UpperTorso", 8)
+        
+        if not humanoid then
+            logMessage("Impossible de trouver l'Humanoid du personnage.", "attention")
+            return
+        end
+        if not upperTorso then
+            logMessage("Le torse supérieur (UpperTorso) est introuvable. Votre avatar n'est peut-être pas configuré en R15.", "attention")
+            return
+        end
+
+        -- Création ou récupération des os d'enveloppe géométrique (Bones)
+        local boneLeft = upperTorso:FindFirstChild("Delta_ChestBone_L")
+        local boneRight = upperTorso:FindFirstChild("Delta_ChestBone_R")
+
+        if not boneLeft then
+            boneLeft = Instance.new("Bone")
+            boneLeft.Name = "Delta_ChestBone_L"
+            boneLeft.CFrame = CFrame.new(-0.35, 0.2, -0.4)
+            boneLeft.Parent = upperTorso
+            logMessage("Os gauche initialisé.", "info")
+        end
+
+        if not boneRight then
+            boneRight = Instance.new("Bone")
+            boneRight.Name = "Delta_ChestBone_R"
+            boneRight.CFrame = CFrame.new(0.35, 0.2, -0.4)
+            boneRight.Parent = upperTorso
+            logMessage("Os droit initialisé.", "info")
+        end
+
+        -- WrapTarget pour l'interaction automatique avec les vêtements 3D
+        local wrapTarget = upperTorso:FindFirstChildOfClass("WrapTarget")
+        if not wrapTarget then
+            wrapTarget = Instance.new("WrapTarget")
+            wrapTarget.Parent = upperTorso
+            logMessage("WrapTarget généré pour l'adaptation des vêtements.", "info")
+        end
+
+        wrapTarget.Stiffness = 0.5   -- Adaptation serrée du tissu aux courbes
+        wrapTarget.Inflation = 0.08  -- Évite le clipping de texture
+
+        -- Reconstruction du Rig pour appliquer les modifications physiques de l'avatar
+        local successBuild, errBuild = pcall(function()
+            humanoid:BuildRigFromAttachments()
+        end)
+        if not successBuild then
+            logMessage("BuildRigFromAttachments a échoué (souvent bloqué par l'anti-cheat du jeu ou non pris en charge) : " .. tostring(errBuild), "attention")
+        end
+
+        -- Variables de simulation physique locale
+        local lastPosition = upperTorso.Position
+        local velocity = Vector3.new(0, 0, 0)
+        local currentOffset = 0
+
+        -- Boucle d'oscillation fluide
+        local connection
+        connection = RunService.RenderStepped:Connect(function()
+            -- Vérifier si le personnage existe toujours dans la scène de jeu
+            if not character or not character:IsDescendantOf(workspace) or not upperTorso:IsDescendantOf(workspace) then
+                connection:Disconnect()
+                logMessage("Personnage détruit ou téléporté hors de la map. Boucle de physique arrêtée.", "info")
+                return
+            end
+
+            -- Encapsulation de la boucle de rendu pour éviter qu'une erreur répétitive ne fasse crasher Delta
+            local successRender, errRender = pcall(function()
+                if PhysicsEnabled then
+                    local currentPosition = upperTorso.Position
+                    local movement = currentPosition - lastPosition
+                    lastPosition = currentPosition
+
+                    -- Algorithme de ressort physique léger
+                    velocity = (velocity * 0.85) - (movement * JIGGLE_BOUNCE)
+                    currentOffset = math.clamp(currentOffset + velocity.Y, -0.15, 0.15)
+
+                    -- Application des déformations locales sur les os
+                    boneLeft.Transform = CFrame.new(0, currentOffset, -CHEST_DEPTH) * CFrame.fromEulerAnglesXYZ(currentOffset * 0.5, 0, 0)
+                    boneRight.Transform = CFrame.new(0, currentOffset, -CHEST_DEPTH) * CFrame.fromEulerAnglesXYZ(currentOffset * 0.5, 0, 0)
+                    
+                    -- Mise à l'échelle des volumes
+                    local scaleL = boneLeft:FindFirstChild("Scale") or Instance.new("Vector3Value", boneLeft)
+                    scaleL.Name = "Scale"
+                    scaleL.Value = Vector3.new(CHEST_SCALE, CHEST_SCALE, CHEST_DEPTH)
+
+                    local scaleR = boneRight:FindFirstChild("Scale") or Instance.new("Vector3Value", boneRight)
+                    scaleR.Name = "Scale"
+                    scaleR.Value = Vector3.new(CHEST_SCALE, CHEST_SCALE, CHEST_DEPTH)
+                else
+                    boneLeft.Transform = CFrame.new(0, 0, -CHEST_DEPTH)
+                    boneRight.Transform = CFrame.new(0, 0, -CHEST_DEPTH)
+                end
+            end)
+
+            if not successRender then
+                connection:Disconnect()
+                logMessage("Erreur critique dans la boucle RenderStepped : " .. tostring(errRender), "erreur")
+            end
+        end)
+
+    end, function(errorMessage)
+        -- Retourne le message d'erreur d'initialisation ainsi que sa stack trace complète
+        return errorMessage .. "\n" .. debug.traceback()
+    end)
+
+    if not successInit then
+        logMessage("Échec de l'initialisation physique sur l'avatar : " .. tostring(errInit), "erreur")
+    end
+end
+
+-- Connexion sécurisée aux événements d'apparition (Spawn) du personnage
+LocalPlayer.CharacterAdded:Connect(function(char)
+    logMessage("Détection d'un nouveau personnage. Préparation de l'injection...", "info")
+    task.wait(2.0) -- Délai de sécurité optimal sur Delta pour charger l'intégralité du Rig R15
+    initialiserPhysiquePersonnage(char)
+end)
+
+-- Lancement immédiat sur le personnage déjà existant au moment de l'injection
+if LocalPlayer.Character then
+    task.spawn(function()
+        logMessage("Personnage déjà chargé. Lancement de la configuration initiale...", "info")
+        initialiserPhysiquePersonnage(LocalPlayer.Character)
+    end)
+end
+
+logMessage("Script de physique Delta prêt et injecté.", "info")
+
+```
